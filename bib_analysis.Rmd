@@ -1,0 +1,1524 @@
+---
+title: "Analysis of Climate Justice literature"
+author: Quinn Asena
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+params:
+  date: Sys.Date()
+---
+
+# Packages and libraries
+
+```{r, Packages, echo=FALSE, message=FALSE, results='hide', warning=FALSE}
+
+if (!require("pacman")) install.packages("pacman", repos="http://cran.r-project.org")
+pacman::p_load(tidyverse, janitor, rscopus, lubridate, tidytext, ggwordcloud, tidylo,
+               widyr, tidygraph, ggraph, igraph, patchwork, tm, topicmodels, SnowballC,
+               textstem, stm, ldatuning, furrr, countrycode, devtools) 
+devtools::install_github("G-Thomson/Manu")
+library(Manu)
+
+
+# Notes on purpose of packages:
+# library(tidyverse) # Data manipulation and plotting
+# # library(data.table)
+# library(janitor) # Cleaning names
+# library(rscopus) # For querying scopus through the API 
+# library(lubridate) # Date formats
+# library(tidytext) # Text mining
+# library(ggwordcloud) # plotting word clouds
+# # library(ggthemes)
+# library(tidylo)
+# library(widyr) # Word matrix
+# library(tidygraph) # Network graphs
+# library(ggraph) # Network graphs
+# library(igraph) # Network graphs
+# library(patchwork) # patching plots together
+# library(tm) # for topic modelling
+# library(topicmodels)
+# library(SnowballC) # for stemming
+# library(textstem) # for lemmatizing and stemming sentences
+# library(stm) # for LDA
+# library(ldatuning) # for additional tuning: FindTopicsNumber()
+# library(furrr)
+# library(countrycode) # Country IDs
+# library(Manu) # Colour palettes
+
+# plotting function from tutorial
+facet_bar <- function(df, y, x, by, nrow = 2, ncol = 2, scales = "free", names_list = "label_value") {
+  mapping <- aes(y = reorder_within({{ y }}, {{ x }}, {{ by }}), 
+                 x = {{ x }}, 
+                 fill = {{ by }})
+  
+  facet <- facet_wrap(vars({{ by }}), 
+                      nrow = nrow, 
+                      ncol = ncol,
+                      scales = scales,
+                      labeller = names_list) 
+  
+  ggplot(df, mapping = mapping) + 
+    geom_col(show.legend = FALSE) + 
+    scale_y_reordered() + 
+    facet + 
+    ylab("") +
+    scale_fill_manual(values = sample(c(get_pal("Hoiho"),get_pal("Kaka")))) +
+    theme_minimal()
+}
+
+
+```
+
+```{r, seed, cache=TRUE}
+
+set.seed(1984)
+
+```
+
+# Corpus overview
+
+```{r, SearchQuery, echo=FALSE, message=FALSE}
+# The following code requires on-campus network access. Work around for lockdown was to use a nectar VM. Using the UoA squid proxy should work as well. The data from the query have been downloaded and saved so the following code is commented out. 1827 results have been returned
+
+
+# rscopus::set_api_key("cf71c76658efeaf1c2da32d64bc8e1d6")
+# scopus_query <- scopus_search(query = "TITLE-ABS-KEY ( \"climate justice\"  OR  
+#                        \"environmental justice\"  OR  \"social justice\"  AND  
+#                        \"climate change\"  OR  \"Global warming\" )  AND  
+#                        ( LIMIT-TO ( LANGUAGE ,  \"English\" ) )", 
+#                        view = "COMPLETE", count = 25, max_count = 2500)
+# 
+# scopus_results <- gen_entries_to_df(scopus_query$entries)
+```
+
+
+```{r, DataWrangling,  echo=FALSE, message=FALSE, results='hide', warning=FALSE}
+# Some formatting/wrangling
+
+scopus_results <- readRDS("data/scopus_api_1827.rds")
+scopus_results <- lapply(scopus_results, clean_names)
+str(scopus_results$df)
+str(scopus_results$affiliation)
+str(scopus_results$author)
+str(scopus_results$`prism:isbn`)
+lapply(scopus_results, str)
+
+# The following does not clean all columns to the correct format but is a start.
+corpus_df <- scopus_results$df |> 
+  mutate(prism_cover_date = as_date(prism_cover_date),
+         author_count_total = as.numeric(author_count_total),
+         pub_date = ymd(prism_cover_date),
+         year = floor_date(prism_cover_date, "year"),
+         prism_issn = as.numeric(prism_e_issn),
+         prism_e_issn = as.numeric(prism_e_issn),
+         prism_volume = as.numeric(prism_volume),
+         citedby_count = as.numeric(citedby_count),
+         entry_number = as.numeric(entry_number),
+         dc_description = tolower(dc_description),
+         authkeywords = tolower(authkeywords)
+         )
+
+
+corpus_df[which(is.na(corpus_df$subtype_description)),]
+
+table(corpus_df$subtype, exclude = NULL) # only 1 undefined
+table(corpus_df$subtype_description, exclude = NULL) # undefined shows as NA
+
+# Checking out which fields have lots of NA values
+sapply(corpus_df, function(x) sum(is.na(x)))
+
+# Check for pubications with >100 authors
+max(corpus_df$author_count_total)
+
+
+# as.data.frame(max(corpus_df$author_count_total))
+# as.data.frame(sapply(corpus_df, function(x) sum(is.na(x))))
+
+# So that prints as paged table in markdown
+na_by_field <- tibble(no_NA = sapply(corpus_df, function(x) sum(is.na(x)), simplify = T)) |> 
+  rownames_to_column(var = "field")
+
+max_auth_check <- data.frame(max_auth_count = max(corpus_df$author_count_total))
+
+na_by_field
+rmarkdown::paged_table(max_auth_check)
+
+```
+
+## Publication types (books, artilces...) before filtering
+
+Plotting results **before filtering**
+
+```{r, PublicationType, echo=FALSE, warning=FALSE, results='hide'}
+ggplot(corpus_df, aes(fct_infreq(subtype_description))) +
+  geom_bar(fill = get_pal("Kotare")[1]) +
+  scale_x_discrete(na.translate = FALSE) + # Leave out the 1 NA
+  labs(x = "Document type", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+```
+
+
+
+## Filtering
+
+Initial results: 1827
+
+- Filtering to keep: "Article", "Review", "Book Chapter", "Book", "Conference Paper", "Note"
+
+- Filtering to remove results with no abstract/text to analyse
+
+After filtering: 1683 remain.
+
+
+
+```{r, FilteringData, echo=FALSE, message=FALSE, results='hide'}
+# unique(corpus_df$prism_publication_name)
+
+# Must be run in order, corpus_df object overwritten
+pre_filter <- data.frame(pre_filter = dim(corpus_df))
+
+# 39 documents are notes
+note_check <- corpus_df |> 
+  filter(subtype_description %in% c("Note"))
+# 21 notes have no description to mine
+sum(is.na(note_check$dc_description))
+# check remainder
+note_check |> drop_na(dc_description) |> select(dc_title, dc_creator)
+# Remaining notes have valid abstracts from short publications with the exception of Kyoto 'will not stop global warming'
+# Notes retained
+note_check |> filter(dc_title %in% "Kyoto 'will not stop global warming'")
+
+# entry_filter <- corpus_df |>
+#   filter(!subtype_description %in% c("Article", "Review", "Book Chapter", "Book", "Conference Paper", "Note"))
+# corpus_df |> filter(year >= "2022-01-01")
+
+corpus_df <- corpus_df |> 
+  filter(subtype_description %in% c("Article", "Review", "Book Chapter", "Book", "Conference Paper", "Note"),
+         !year >= "2022-01-01") |> 
+  drop_na(dc_description)
+
+post_filter <- data.frame(post_filter = dim(corpus_df))
+post_filter
+
+# country_df <- scopus_results[[2]] |>
+#   filter(!entry_number %in% entry_filter$entry_number)
+
+author_id_df <- scopus_results$author |> 
+  filter(entry_number %in% corpus_df$entry_number)
+
+author_af_df <- scopus_results$affiliation |> 
+  filter(entry_number %in% corpus_df$entry_number)
+
+```
+### Table of results 
+
+Results *after filtering*.
+
+date range of results: `r range(corpus_df$pub_date)`
+
+```{r, PublicationTypeTable, echo=FALSE, warning=FALSE}
+pub_type_tab <- as_tibble(corpus_df) |> 
+  select(subtype_description) |>
+  add_count(subtype_description) |>
+  distinct() |> 
+  mutate(prop = n/sum(n))
+
+pub_type_tab
+
+# tibble(date_range = range(corpus_df$pub_date))
+
+```
+
+## Top 15 most popular journals
+
+Environmental Justice journal established in March 2008.
+
+```{r, TopJournals, echo=FALSE, message=FALSE, fig.height=7.5}
+# ggplot(corpus_df, aes(fct_infreq(prism_publication_name))) +
+#   geom_bar() +
+#   scale_x_discrete()
+
+# Some journal names have a country in brackets, checked and grouped
+corpus_df_check <- corpus_df |> 
+  filter(grepl('\\(|^Development|^Sustainability|^Water|^Human Geography|^Social Work', prism_publication_name)) |> 
+  count(prism_publication_name, sort = TRUE)
+
+# corpus_df |> filter(grepl('^Development', prism_publication_name)) |> count(prism_publication_name, sort = TRUE) # duplicated
+# corpus_df |> filter(grepl('^Sustainability', prism_publication_name)) |> count(prism_publication_name, sort = TRUE) # duplicated
+# corpus_df |> filter(grepl('^Water', prism_publication_name)) |> count(prism_publication_name, sort = TRUE) # duplicated
+# corpus_df |> filter(grepl('^Human Geography', prism_publication_name)) |> count(prism_publication_name, sort = TRUE) # not duplicate
+# corpus_df |> filter(grepl('^Social Work', prism_publication_name)) |> count(prism_publication_name, sort = TRUE) # not duplicate
+
+# journal_df <- tibble(corpus_df) |>
+#   mutate(prism_publication_name = 
+#            case_when(prism_publication_name == "Sustainability (Switzerland)" ~ "Sustainability",
+#                      prism_publication_name == "Development (Basingstoke)" ~ "Development",
+#                      prism_publication_name == "Water (Switzerland)" ~ "Water",
+#                      TRUE ~ as.character(prism_publication_name))) |> 
+#   count(prism_publication_name, sort = TRUE) |>
+#   mutate(prism_publication_name = fct_reorder(prism_publication_name, n))
+
+# ggplot(tail(journal_df, 20), aes(x = prism_publication_name, y = n)) +
+#   geom_bar(stat = "identity") +
+#   scale_x_discrete(limits = rev, labels = scales::wrap_format(15)) +
+#   theme(axis.text.x = element_text(angle = 45))
+
+journal_df <- tibble(corpus_df) |>
+  count(source_id, sort = TRUE) |>
+  mutate(source_id = fct_reorder(source_id, n))
+
+journal_names <- journal_df |> 
+  left_join(corpus_df, by = "source_id") |> 
+  group_by(source_id) |> 
+  slice(1) |> 
+  select(source_id, prism_publication_name)
+
+journal_df <- journal_df |> 
+  left_join(journal_names) |> 
+  mutate(prism_publication_name =
+           case_when(prism_publication_name == "Sustainability (Switzerland)" ~ "Sustainability",
+                     prism_publication_name == "Development (Basingstoke)" ~ "Development",
+                     prism_publication_name == "Water (Switzerland)" ~ "Water",
+                     TRUE ~ as.character(prism_publication_name)),
+         prism_publication_name = fct_reorder(prism_publication_name, n, sum))
+
+# To stop weird ordering of bars quirks:
+# https://stackoverflow.com/questions/43397556/how-do-i-sort-bar-chart-by-value-with-r-ggplot
+
+
+ggplot(head(journal_df, 15), aes(n, prism_publication_name)) +
+  geom_col(fill = get_pal("Kotare")[1]) +
+  scale_y_discrete(labels = scales::wrap_format(20)) +
+  labs(x = "Publication count", y = NULL) +
+  theme_minimal()
+```
+
+Number of publications from the top 15 journals
+
+```{r, TopJournalsTab, echo=FALSE}
+
+journal_df |> head(15)
+
+```
+
+## Publications through time
+
+**Figure truncated to 2020**.
+
+```{r, PublicationsThroughTime, echo=FALSE, message=FALSE, warning=FALSE}
+
+# note: Date converted to `floor_date(prism_cover_date, "year")`
+
+publications_by_year <- corpus_df |> 
+  select(year) |>
+  group_by(year) |> 
+  summarise(count = length(year))
+
+ggplot(publications_by_year, aes(x = year, y = count)) +
+  geom_col(fill = get_pal("Kotare")[1]) +
+  scale_x_date(limits = c(publications_by_year$year[1], "2020-01-01")) +
+  labs(y = "Count", x = "Year") +
+  theme_minimal()
+
+```
+
+Table of the number of publications through time.
+
+```{r, PublicationsThroughTimeTab, echo=FALSE, message=FALSE, warning=FALSE}
+
+publications_by_year |> arrange(desc(year))
+
+```
+
+
+Publications through time normalised to 2010: Shows the growth of publications on climate justice (dark purple) relative to publications in all of science (red) and the environment subject area (blue). Figure truncated to 2020.
+
+```{r, PublicationsThroughTimeNormalised, echo=FALSE, message=FALSE, warning=FALSE}
+
+all_articles <- read.csv("data/allArticles_170921.csv")
+
+all_articles_nor <- all_articles |>
+  select(-agri) |> 
+  filter(between(year, 1997,2021)) |> 
+  mutate(across(!year, ~ .x / .x[which(year == 2010)]))
+
+
+publications_by_year_nor <- publications_by_year |> 
+  mutate(across(count, ~ .x / .x[which(year == "2010-01-01")]),
+         year = as.numeric(format(year, format = "%Y")),
+         subject_area = "climate_justice")
+
+all_subject_fields_long <- all_articles_nor |> 
+  pivot_longer(-year, names_to = "subject_area", values_to = "count") |> 
+  bind_rows(publications_by_year_nor)
+
+normalised_pubs <- ggplot(all_subject_fields_long, aes(x = year, y = count, colour = subject_area)) +
+  geom_line(size = 1) +
+  geom_hline(yintercept = 1) +
+  scale_x_continuous(limits = c(1997, 2020)) +
+  scale_colour_manual(values = get_pal("Takahe"), labels=c("All science", "Corpus", "Environment")) +
+  labs(y = "Normalised article count (to 2010)", x = "Year", colour = "Subject area") +
+  theme_minimal()
+
+normalised_pubs
+
+ggsave(
+  filename = "normalised_pubs.png",
+  plot = normalised_pubs,
+  device = "png",
+  path = "images/",
+  dpi = 300,
+  width = 190,
+  height = 110,
+  units = "mm"
+)
+
+```
+
+
+## Mean number of authors through time
+
+```{r, AuthorThroughTime, echo=FALSE}
+mean_author_by_year <- corpus_df |> 
+  select(year, author_count_total) |>
+  group_by(year) |> 
+  summarise(mean_auth = mean(author_count_total))
+
+ggplot(mean_author_by_year, aes(x = year, y = mean_auth)) +
+  geom_col(fill = get_pal("Kotare")[1]) +
+  labs(x = "Year", y = "Mean number of authors") +
+  theme_minimal()
+```
+
+Table of mean authors through time:
+
+```{r, AuthorThroughTimeTab, echo=FALSE}
+
+mean_author_by_year |> arrange(desc(year))
+```
+
+## Most productive authors
+
+
+
+```{r, ProductiveAuthors, echo=FALSE, message=FALSE, results='hide'}
+dim(author_id_df) # 4137 row (3923 after filter)
+sum(is.na(author_id_df$given_name)) # 28 NA
+sum(is.na(author_id_df$surname)) # 21 NA
+sum(is.na(author_id_df$authid)) # 21 NA
+length(unique(author_id_df$surname))
+length(unique(author_id_df$authid))
+author_id_df[which(is.na(author_id_df$given_name)),]
+
+# author_id_df <- scopus_results$author 
+  # mutate(authid = as.numeric(authid),
+  #        orcid = as.numeric(orcid),
+  #        afid = as.numeric(afid))
+
+# Could weight by 1/number of authors
+
+productive_authors_df <- author_id_df |> 
+  drop_na(authid) |> # Most productive author is NA NA lol
+  add_count(authid, sort = TRUE) |>
+  group_by(authid) |>
+  slice(1) |>
+  ungroup() |>
+  arrange(desc(n)) |>
+  mutate(authname = fct_reorder(authname, n))
+
+
+productive_authors_plot <- ggplot(head(productive_authors_df, 15), aes(n, authname)) +
+  geom_col(fill = get_pal("Kotare")[1]) +
+  scale_y_discrete(labels = scales::wrap_format(15), na.translate = FALSE) +
+  scale_x_continuous(breaks = seq(0,10,2)) +
+  labs(x = "Authorship count", y = NULL) +
+  theme_minimal()
+
+productive_authors_plot
+
+ggsave(
+  filename = "productive_authors_plot.png",
+  plot = productive_authors_plot,
+  device = "png",
+  path = "images/",
+  dpi = 300,
+  width = 190,
+  height = 110,
+  units = "mm"
+)
+
+ ggplot(head(productive_authors_df, 15), aes(n, authname)) +
+  geom_col(fill = get_pal("Kotare")[1]) +
+  scale_y_discrete(labels = NULL, na.translate = FALSE) +
+  scale_x_continuous(breaks = seq(0,10,2)) +
+  geom_text(
+    aes(label = authname, x = 2.5), 
+    hjust = 0, nudge_x = -2,
+    size = 4, colour = "white"
+  ) +
+  labs(x = "Authorship count", y = NULL) +
+  theme_minimal()
+
+
+```
+
+```{r, ProductiveAuthorsTab, echo=FALSE, message=FALSE}
+productive_authors_df |> head(15) |> select(authname, n)
+
+```
+
+## Most cited papers
+
+```{r, CitationCount, echo=FALSE, message=FALSE, results='hide'}
+# sum(is.na(corpus_df$citedby_count))
+
+# corpus_df |>
+#   arrange(desc(citedby_count)) |> 
+#   slice(1:10) |>
+#   mutate(dc_title = fct_reorder(dc_title, citedby_count)) |> 
+#   ggplot(aes(y = dc_title, x = citedby_count)) +
+#   geom_col(fill = get_pal("Kotare")[1]) +
+#   scale_y_discrete(labels = scales::wrap_format(30)) +
+#   geom_label(aes(label = dc_creator, x = citedby_count)) +
+#   labs(x = "Citation count", y = NULL) +
+#   theme_minimal()
+
+# Alternate way of doing the same thing:
+# title_df <- corpus_df |>
+#   select(dc_title, citedby_count) |> 
+#   arrange(desc(citedby_count)) |> 
+#   slice(1:15) |>
+#   mutate(dc_title = fct_reorder(dc_title, citedby_count))
+# 
+# ggplot(title_df, aes(y = dc_title, x = citedby_count)) +
+#   geom_col() +
+#   scale_y_discrete(limits = rev, labels = scales::wrap_format(15)) +
+#   labs(y = NULL) +
+#   th
+
+title_df <- corpus_df |>
+  arrange(desc(citedby_count)) |> 
+  slice(1:10) |>
+  mutate(#dc_title = fct_reorder(dc_title, citedby_count),
+         etal= case_when(author_count > 1 ~ "et al.,", TRUE ~ as.character("")),
+         author_year = str_c(dc_creator, etal, lubridate::year(year), sep = " "),
+         author_year = fct_reorder(author_year, citedby_count)
+         )
+
+top_pub_plot <-  ggplot(title_df, aes(y = author_year, x = citedby_count)) +
+  geom_col(fill = get_pal("Kotare")[1]) +
+  # scale_y_discrete(labels = scales::wrap_format(30)) +
+  # geom_text(aes(label = stringr::str_wrap(dc_title, 30)), colour = "white",
+  #           position = position_stack(vjust = 0.5)) +
+  labs(x = "Citation count", y = NULL) +
+  theme_minimal()
+
+top_pub_plot
+
+ggsave(
+  filename = "top_pub_plot.png",
+  plot = top_pub_plot,
+  device = "png",
+  path = "images/",
+  dpi = 300,
+  width = 190,
+  height = 110,
+  units = "mm"
+)
+```
+
+## Most productive countries
+
+
+```{r, ProductiveCountries, echo=FALSE, message=FALSE}
+
+prod_country_df <- author_af_df |> 
+  drop_na(affiliation_country) |>
+  add_count(affiliation_country, sort = TRUE) |>
+  group_by(affiliation_country) |>
+  slice(1) |>
+  ungroup() |>
+  arrange(desc(n)) |>
+  mutate(affiliation_country = fct_reorder(affiliation_country, n))
+
+# unite can also be: mutate(full_name = str_c(scopus_results$author$given_name, scopus_results$author$surname, sep = ", "))
+
+productive_countries_plot <- ggplot(head(prod_country_df, 20), aes(n, affiliation_country)) +
+  geom_col(fill = get_pal("Kotare")[1]) +
+  scale_y_discrete(labels = scales::wrap_format(15), na.translate = FALSE) +
+  # geom_text(aes(label = n), 
+  #   hjust = 1, nudge_x = -.6,
+  #   colour = "white", size = 4) +
+  labs(x = "Author affiliation count", y = NULL) +
+  theme_minimal()
+
+productive_countries_plot
+
+# ggsave(
+#   filename = "productive_countries_plot.png",
+#   plot = productive_countries_plot,
+#   device = "png",
+#   path = "images/",
+#   dpi = 300,
+#   width = 190,
+#   height = 110,
+#   units = "mm"
+# )
+
+```
+```{r, ProductiveCountriesTab, echo=FALSE, message=FALSE}
+prod_country_df |> head(15) |> select(affiliation_country, n)
+```
+
+# Corpus analysis
+
+## Most common words in abstracts.
+
+Exploratory plot. No surprises, good check for unexpected common words.
+
+```{r, CommonWord, echo=FALSE, message=FALSE}
+# additional stopwords
+# Cannot remove ALL numbers (see bigrams graph 'covid -\>19', remove numbers starting with '10.')
+# 
+# See:
+# 
+# -   ideologi \<-\> ideolog, legal \<-\> law, religi \<-\> religion, australian \<-\> australia,
+# 
+# -   number cluster (seems to be citation superscripts, could also include bullet points?), springer
+# 
+# Interesting that covid \<-\> 19 and trump \<-\> administr already float to the top
+stop_words_extra <- tibble(
+  word = c("j.jum", "10.1016"),
+  lexicon = "quinn"
+) |> 
+  bind_rows(stop_words)
+
+```
+
+```{r, echo=FALSE, message=FALSE}
+# Tutorial groups by book does not work well for bigrams
+# https://bookdown.org/Maxine/tidy-text-mining/the-unnest-tokens-function.html
+# Does tokenize do lemmitization?
+
+tidy_abs <- corpus_df |>
+  select(entry_number, dc_description) |> 
+  drop_na() |> 
+  # group_by(entry_number) |>  # All abstracts not comparing publications
+  unnest_tokens(word, dc_description) |> 
+  anti_join(stop_words_extra) |> 
+  mutate(word = SnowballC::wordStem(word)) |>
+  ungroup()
+
+# tidy_abs |>
+#   count(word, sort = T) |>
+#   filter(n > 600) |>
+#   ggplot(aes(n, word)) +
+#   geom_col() +
+#   labs(y = NULL) +
+#   theme_minimal()
+
+# Top n words
+tidy_abs |>
+  count(word, sort = TRUE) |>
+  top_n(20) |>
+  mutate(word = reorder(word, n)) |>
+  ggplot() +
+  geom_col(aes(x = n, y = word), fill = get_pal("Kotare")[1]) +
+  labs(y = NULL, x = "Count") +
+  theme_minimal()
+
+
+```
+
+## Most common word pairs in abstracts
+
+
+
+```{r, CommonBigram, echo=FALSE, message=FALSE}
+
+# bigrams does not work well grouped by entry (too little information in abs)
+# tutorial does not group_by book https://bookdown.org/Maxine/tidy-text-mining/tokenizing-by-n-gram.html
+tidy_abs_ngrams <- corpus_df |>
+  select(entry_number, dc_description) |> 
+  drop_na() |> 
+  unnest_tokens(bigram, dc_description, token = "ngrams", n = 2) |> 
+  separate(bigram, into = c("word1", "word2"), sep = " ") |>
+  filter(!word1 %in% c(stop_words_extra$word, NA),
+         !word2 %in% c(stop_words_extra$word, NA)) |>
+  mutate(word1 = SnowballC::wordStem(word1),
+         word2 = SnowballC::wordStem(word2)) |>
+  unite(bigram, c(word1, word2), sep = " ") |>
+  count(bigram, sort = T) 
+
+tidy_abs_ngrams |>
+  slice(1:20) |>
+  mutate(bigram = reorder(bigram, n)) |>
+  ggplot(aes(n, bigram)) +
+  geom_col(fill = get_pal("Kotare")[1]) +
+  labs(y = NULL, x = "Count") +
+  theme_minimal()
+
+```
+
+## Network of word pairs
+
+Network graph of most commonly joined words. "Note that this is a visualization of a Markov chain, a common model in text processing, where the choice of a word only depends on its previous word".
+
+The bigram count values have been log transformed to show a stronger colour gradient in the visualisation but the labels show the true count.
+
+```{r, WordPairNetFinn, echo=FALSE, message=FALSE, warning=FALSE}
+
+## Network of word pairs ----------------------------------------
+tidy_abs_ngrams_net_extra <- corpus_df |>
+  select(entry_number, dc_description) |> 
+  drop_na() |> 
+  unnest_tokens(bigram, dc_description, token = "ngrams", n = 2) |> 
+  separate(bigram, into = c("from", "to"), sep = " ") |>
+  filter(!from %in% c(stop_words_extra$word, NA),
+         !to %in% c(stop_words_extra$word, NA)) |>
+  mutate(from = SnowballC::wordStem(from),
+         to = SnowballC::wordStem(to)) |>
+  unite(bigram, c(from, to), sep = " ", remove = FALSE) |>
+  count(from, to, sort = T) 
+
+# get top bigrams
+bigram_graph_extra <- tidy_abs_ngrams_net_extra|> 
+  top_n(100) 
+
+# get total mentios for each word
+wrd_cnts <- tidy_abs_ngrams_net_extra|> 
+  pivot_longer(cols = from:to)|>
+  group_by(value)|>
+  summarise(tot = sum(n))|>
+  arrange(-tot)|>
+  dplyr::filter(value %in% bigram_graph_extra$from | value %in% bigram_graph_extra$to) 
+
+# create graph with vertex and edge attributes
+bigram_graph2 <- bigram_graph_extra |>
+  graph_from_data_frame(directed = TRUE, vertices = wrd_cnts)
+
+
+# plotting
+arrow <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(bigram_graph2, layout = "fr") + 
+  geom_node_point(aes(size = tot), shape = 16, colour = "grey") +
+  geom_edge_link(aes(edge_colour = log(n)), arrow = arrow, end_cap = circle(0.05, "inches"), edge_width = 1) + 
+  scale_size_continuous(range = c(3, 15)) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  scale_edge_colour_continuous(breaks = log(c(100, 500, 3000)), labels =c(100, 500, 3000)) +
+  theme_graph(base_family="sans") +
+  labs(edge_colour = "Bigram \ncount", size = "word \ncount") +
+  guides(size = guide_legend(reverse = TRUE))
+
+```
+
+<!-- # tf-idf and log ratio -->
+
+<!-- Compares documents, not useful in this case but curious. Maybe can be analysed further? Did not work when applied to all abstracts not grouped by article. Detailed filtering/stopwords required if used: -->
+
+```{r, TfIdfLogRatio, echo=FALSE, message=FALSE, results='hide', eval=FALSE}
+# The following compares documents. Not useful in this case.
+tf_idf <- corpus_df |>
+  select(entry_number, dc_description) |>
+  drop_na() |> 
+  unnest_tokens(word, dc_description) |>
+  filter(!word %in% stop_words_extra$word) |>
+  # mutate(word = SnowballC::wordStem(word)) |>
+  add_count(entry_number, name = "total_words") |>
+  group_by(entry_number, total_words) |>
+  count(word, sort = TRUE) |>
+  ungroup() |>
+  select(-total_words) |>
+  # mutate(all = "all_abs") |>
+  bind_tf_idf(term = word, document = entry_number, n = n) |>
+  bind_log_odds(set = entry_number, feature = word, n = n) |>
+  arrange(desc(tf_idf))
+
+tf_idf
+
+```
+
+### Word cloud {.unlisted .unnumbered .hidden}
+
+A word cloud (because why not?)
+
+```{r, WordCloud, echo=FALSE, message=FALSE, eval=FALSE}
+
+tidy_abs |>
+  count(word, sort = T) |> 
+  top_n(200) |> 
+  ggplot() +
+  geom_text_wordcloud_area(aes(label = word, size = n)) +
+  scale_size_area(max_size = 15) +
+  theme_light()
+
+```
+
+# Correlating word pairs
+
+Shows expected result; however, individual abstracts too small to be robust. Ultimately excluded as unnecessary from final results.
+
+```{r, WordCorr, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+# Stopwords removed from tidy_abs already and words stemmed
+tidy_abs_widyr <- tidy_abs |>
+  # mutate(word = SnowballC::wordStem(word)) |> 
+  pairwise_count(word, entry_number, sort = TRUE)
+
+tidy_abs_widyr_word_cors <- tidy_abs |> 
+  # mutate(word = SnowballC::wordStem(word)) |> 
+  add_count(word) |> 
+  filter(n >= 20) |> 
+  select(-n) |>
+  pairwise_cor(word, entry_number, sort = TRUE) # Grouping by entry number. same problem as bigrams, too little info in abstracts?
+
+tidy_abs_widyr_word_cors |>
+  filter(item1 %in% c("climat", "chang", "justic", "social",
+                      "environment", "global", "warm")) |>
+  group_by(item1) |>
+  top_n(6) |>
+  ungroup() |>
+  facet_bar(y = item2, x = correlation, by = item1, nrow = 7)
+
+```
+
+
+
+```{r, WordCorrNet, echo=FALSE, message=TRUE, eval=FALSE}
+# problem with grouping variable same as bigrams. see next code chunk
+tidy_abs_widyr_word_cors |>
+  filter(correlation > .3) |> 
+  as_tbl_graph() |> 
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_colour = correlation), end_cap = circle(0.05, "inches"), edge_width = 1) + 
+  geom_node_point(color = "grey", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  # scale_edge_colour_viridis() +
+  theme_graph(base_family="sans") +
+  labs(edge_colour = "Correlation")
+
+
+```
+
+The following is bigrams grouped by article rather than all article abstracts. Probably not useful to analyse per abstract but highlights some possible filtering is necessary on abstract texts?
+
+```{r, BigramsByArticle, echo=FALSE, message=FALSE, eval=FALSE}
+# Numbers, DOIs dates?
+bigrams_by_article <- corpus_df |>
+  select(entry_number, dc_description) |>
+  drop_na() |> 
+  group_by(entry_number) |>
+  unnest_tokens(bigram, dc_description, token = "ngrams", n = 2) |> 
+  separate(bigram, into = c("word1", "word2"), sep = " ") |>
+  filter(!word1 %in% c(stop_words_extra$word, NA),
+         !word2 %in% c(stop_words_extra$word, NA)) |>
+  unite(bigram, c(word1, word2), sep = " ") |>
+  count(bigram, sort = T) |>
+  ungroup() |>
+  slice(1:20) |>
+  mutate(bigram = reorder(bigram, n))
+
+bigrams_by_article
+
+ggplot(bigrams_by_article, aes(n, bigram)) +
+  geom_col() +
+  labs(y = NULL) +
+  theme_minimal()
+
+```
+
+
+# Author keywords
+
+Most common keywords used by Authors. `r sum(is.na(corpus_df$authkeywords))` documents out of `r dim(corpus_df)[1]` do not have keywords.
+
+```{r, AuthorKeywords, echo=FALSE, message=FALSE, results='hide', warning=FALSE}
+
+as.data.frame(sum(is.na(corpus_df$authkeywords)))
+# 494 NA values
+
+as.data.frame(sum(is.na(corpus_df$authkeywords)))
+
+auth_keywords <- corpus_df |> 
+  select(entry_number, authkeywords) |> 
+  drop_na() |> 
+  unnest_paragraphs(keywords, paragraph_break = "|", authkeywords) |> 
+  mutate(keywords = textstem::stem_strings(keywords))
+
+
+auth_keywords |>
+  count(keywords, sort = T) |>
+  slice(1:20) |>
+  mutate(keywords = reorder(keywords, n)) |>
+  ggplot(aes(n, keywords)) +
+  geom_col(fill = get_pal("Kotare")[1]) +
+  labs(y = NULL, x = "Count") +
+  theme_minimal()
+
+# textstem::stem_strings("climate change")
+# textstem::stem_words("climate change")
+# SnowballC::wordStem("climate change")
+
+```
+
+# Frequency of search terms in abstract over time
+
+Shows strong patterns in search terms over time (note that there are only a few publications in early years). Excluded from main text as the focus of the work is on trends in _topics_.
+
+```{r, WordFreq, echo=FALSE, message=FALSE, eval=TRUE}
+
+tidy_abs_tm <- corpus_df |>
+  select(entry_number, dc_description, year) |>
+  drop_na(dc_description) |>
+  group_by(year) |>
+  unnest_tokens(word, dc_description) |>
+  anti_join(stop_words_extra) |>
+  mutate(word = SnowballC::wordStem(word)) |>
+  # group_by(entry_number) |> # GROUPED
+  count(word) |>
+  mutate(word_sum = sum(n)) |> 
+  ungroup() 
+
+
+tidy_abs_tm |>
+  filter(word %in% c("social", "justic", "climat", "warm", "chang", "environment")) |>
+  ggplot(aes(year, n / word_sum)) +
+  geom_point() +
+  geom_smooth() +
+  facet_wrap(~ word, scales = "free_y") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  # scale_x_date(limits = c(min(tidy_abs_tm$year), "2020-01-01")) +
+  labs(title = "% frequency of word in abs")
+
+```
+
+# LDA
+
+To explore the topics within the corpus, search terms (climate, change, justice, social, environmental, global, and warming) have been excluded from the topic model. Other frequent but not meaningful terms (i.e., article, research and studies) have also been removed.
+ 
+
+```{r, LDA, echo=FALSE, message=FALSE, cache=TRUE}
+# Including STEMMED search terms as stop words. CAREFUL IF ONLY LEMMATIZING!!! JANKY
+# it depends on the order you do things.  remove the stopwords before any lemmatising or stemming. also convert to lowercase, remove numbers, deal with special characters, etc. (edited) 
+set.seed(1984)
+
+stop_words_lda <- tibble(
+  word = c("articl", "research", "studi",
+           "climat", "chang", "justic",
+           "social", "environment", "global", "warm"),
+  lexicon = "quinn"
+)
+
+
+# Llemmatize does not work for
+# c("economy", "economic") |>
+#   lemmatize_strings()
+# "economy"  "economic"
+
+# c("has", "have") |> 
+#    lemmatize_strings()
+# "have" "have"
+
+# c("economy", "economic") |>
+#   wordStem()
+#"economi" "econom" 
+
+
+# stop_words |> filter(grepl('econ', word))
+  
+tidy_abs_lda <- corpus_df |>
+  select(entry_number, dc_description) |> 
+  drop_na(dc_description) |> 
+  unnest_tokens(word, dc_description) |> 
+  anti_join(stop_words_extra) |> 
+  # mutate(word = textstem::lemmatize_words(word)) |>
+  mutate(word = SnowballC::wordStem(word)) |>
+  anti_join(stop_words_lda) |> # Removing stemmed stopwords
+  group_by(entry_number) |> # GROUPED
+  add_count(word, name = "count") |> # pretty sure add_count is grouped so group_by unnecessary.
+  ungroup()
+
+abs_dfm <- tidy_abs_lda |> 
+  cast_dfm(document = entry_number, term = word, value = count)
+
+abs_dfm_lda <- stm(abs_dfm,
+                   K = 6,
+                   verbose = FALSE,
+                   init.type = "LDA")
+summary(abs_dfm_lda)
+
+names_list <- c(
+  `Topic 1` = "Topic 1: Education & food security",
+  `Topic 2` = "Topic 2: Sustailability, development, & policy",
+  `Topic 3` = "Topic 3: International relations & carbon emissions",
+  `Topic 4` = "Topic 4: Health, vulnerability, & adaptation",
+  `Topic 5` = "Topic 5: Policy & activism",
+  `Topic 6` = "Topic 6: Human rights & indigenous people"
+)
+
+six_topic_plot <- tidy(abs_dfm_lda) |> 
+  group_by(topic) |>
+  top_n(10) |> 
+  ungroup() |> 
+  mutate(topic = str_c("Topic ", topic)) |>
+  facet_bar(y = term, x = beta, by = topic, nrow = 3, names_list = as_labeller(names_list))
+
+six_topic_plot
+
+ggsave(
+  filename = "six_topic_plot.png",
+  plot = six_topic_plot,
+  device = "png",
+  path = "images/",
+  dpi = 300,
+  width = 190,
+  height = 200,
+  units = "mm"
+)
+
+```
+
+## LDA loop
+
+```{r, LdaLoop, echo=FALSE, message=FALSE, results='hide', cache=TRUE}
+set.seed(1984)
+
+topic_number_list <- c(4:10)
+abs_dfm_lda_list <- lapply(seq_along(topic_number_list), function (i){
+  print(topic_number_list[i])
+  stm(abs_dfm,
+      K = topic_number_list[i],
+      verbose = FALSE,
+      init.type = "LDA")
+})
+  
+
+topic_summary_list <- lapply(abs_dfm_lda_list, summary)
+
+topic_plot_list <- lapply(abs_dfm_lda_list, function(x){
+tidy(x) |> 
+  group_by(topic) |>
+  top_n(10) |> 
+  ungroup() |> 
+  mutate(topic = str_c("Topic ", topic)) |>
+  facet_bar(y = term, x = beta, by = topic, nrow = 5) +
+  labs(title = "Words with highest probability in each topic")
+})
+
+```
+
+## Four to ten topics {.tabset}
+
+
+```{r, results='asis', echo=FALSE}
+
+headings <- paste("Topics", 4:10)
+for (i in seq_along(topic_plot_list)) {
+  cat("### ",headings[i],"\n")
+  
+  cat("```\n")
+  print(topic_summary_list[[i]])
+  cat("\n```\n")
+  
+  print(topic_plot_list[[i]])
+  cat('\n\n')
+}
+```
+
+# LDA tuning
+
+Statistical methods for identifying the optimum number of topics.
+
+```{r, LdaTune1, echo=FALSE, message=FALSE, cache=TRUE, warning=FALSE}
+plan(multisession, gc = TRUE, workers = 2)
+# plan(sequential)
+models <- tibble(K = 4:10)|>
+  mutate(topic_model = future_map(K, ~ stm(abs_dfm,
+                                           init.type = "Spectral",
+                                           K = .,
+                                           verbose = FALSE), .options = furrr_options(seed = TRUE)))
+
+heldout <- make.heldout(abs_dfm)
+
+k_result <- models|>
+  mutate(exclusivity        = map(topic_model, exclusivity),
+         semantic_coherence = map(topic_model, semanticCoherence, abs_dfm),
+         eval_heldout       = map(topic_model, eval.heldout, heldout$missing),
+         residual           = map(topic_model, checkResiduals, abs_dfm),
+         bound              = map_dbl(topic_model, function(x) max(x$convergence$bound)),
+         lfact              = map_dbl(topic_model, function(x) lfactorial(x$settings$dim$K)),
+         lbound             = bound + lfact,
+         iterations         = map_dbl(topic_model, function(x) length(x$convergence$bound)))
+
+k_result|>
+  transmute(K,
+            `Lower bound`         = lbound,
+            Residuals             = map_dbl(residual, "dispersion"),
+            `Semantic coherence`  = map_dbl(semantic_coherence, mean),
+            `Held-out likelihood` = map_dbl(eval_heldout, "expected.heldout"))|>
+  pivot_longer(-K, names_to = "metrics", values_to = "value")|>
+  ggplot(aes(K, value, color = metrics)) +
+  geom_line(size = 1.5) +
+  facet_wrap(~ metrics, scales = "free_y")
+```
+
+## LDA tuning 2
+
+```{r, LdaTune2, echo=FALSE, message=FALSE, cache=TRUE}
+
+abs.LDAtune <- ldatuning::FindTopicsNumber(
+  abs_dfm,
+  topics = seq(from = 2, to = 30, by = 1),
+  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 1984),
+  mc.cores = 2L,
+  verbose = TRUE
+)
+
+lda_summary <- summary(abs.LDAtune)
+
+tuning_2_results <- as.data.frame.matrix(lda_summary) |> remove_rownames()
+
+tuning_2_results
+
+ #     topics   Griffiths2004       CaoJuan2009         Arun2010       Deveaud2014   
+ # Min.   : 2   Min.   :-1150555   Min.   :0.03854   Min.   : 988.9   Min.   :2.131  
+ # 1st Qu.: 9   1st Qu.:-1016208   1st Qu.:0.04450   1st Qu.:1073.4   1st Qu.:2.209  
+ # Median :16   Median : -977364   Median :0.05464   Median :1176.1   Median :2.308  
+ # Mean   :16   Mean   : -996455   Mean   :0.06745   Mean   :1250.0   Mean   :2.292  
+ # 3rd Qu.:23   3rd Qu.: -960479   3rd Qu.:0.07880   3rd Qu.:1368.1   3rd Qu.:2.380  
+ # Max.   :30   Max.   : -951223   Max.   :0.16058   Max.   :1852.4   Max.   :2.467  
+
+
+```
+
+
+
+## Gamma diagnostics
+
+Checks on the result of Gamma.
+
+```{r, GammaThroughDiagnostics, echo=FALSE, warning=FALSE, message=FALSE}
+
+# tidy(tidy(abs_dfm_lda, matrix = "gamma")) returns a sequential document number not the entry id.
+# entry_number has been filtered -> entry_number 4 has been removed but document 4 exists in output.
+# Using row numbers to join by not entry_number
+# Safer to bind entries to abs_dfm. Carries through correctly.
+
+corpus_df_gamma <- corpus_df |>
+  drop_na(dc_description) |> # MUST DROP NA TO MAINTAIN ROW NUMBER AND DOCUMENT NUMBER SYNC. NAs now removed by this poing
+  select(entry_number, year) |> 
+  mutate(sequential_entry_number = row_number()) 
+
+abs_dfm_lda_gamma <- tidy(abs_dfm_lda, matrix = "gamma") |> 
+  left_join(corpus_df_gamma, by = c("document" = "sequential_entry_number"))
+
+# abs_dfm_lda_gamma |> 
+#   group_by(year, n_prop, topic) |> 
+#   summarise(mean_gamma = mean(gamma)) |> 
+#   ungroup() |> 
+#   mutate(topic = as_factor(topic)) |> 
+#   ggplot(aes(x = year, y = mean_gamma)) +
+#   facet_wrap(~topic) +
+#   # geom_point() +
+#   # geom_line() +
+#   geom_smooth(se = FALSE) +
+#   scale_x_date(limits = c(min(abs_dfm_lda_gamma$year), "2020-01-01")) +
+#   theme_minimal()
+
+abs_dfm_lda_gamma_mean <- abs_dfm_lda_gamma |> 
+  group_by(year, topic) |> 
+  summarise(mean_gamma = mean(gamma)) |> 
+  ungroup() |> 
+  mutate(topic = as_factor(topic))
+
+ggplot(abs_dfm_lda_gamma, aes(gamma)) +
+  geom_histogram() +
+  facet_wrap(~ topic) +
+  theme_minimal()
+
+abs_dfm_lda_max_gamma <- abs_dfm_lda_gamma |> 
+  group_by(entry_number) |> 
+  slice_max(gamma) |>
+  ungroup() |> 
+  group_by(year) |> 
+  add_count(topic) |> 
+  mutate(n_prop = n/length(n))
+
+x <- abs_dfm_lda_max_gamma$gamma; y <- hist(x); z <- cumsum(y$counts); plot(z, x = y$mids)
+```
+
+## Gamma through time
+
+The Figure below shows the change in gamma through time per topic. Gamma is the probability of a document belonging to a given topic ($k$). The bars show the number of articles each year that belonged to that topic. Articles are considered as belonging to the topic for which they have the highest gamma.
+
+```{r, GammaThroughTime, echo=FALSE, warning=FALSE, message=FALSE}
+# topic_labs <- paste0("Topic ", 1:6)
+# names(topic_labs) <- paste(1:6)
+
+topic_labs <- c(
+  `Topic 1` = "Topic 1: \nEducation & food security",
+  `Topic 2` = "Topic 2: \nSustailability, development, & policy",
+  `Topic 3` = "Topic 3: \nInternational relations & carbon emissions",
+  `Topic 4` = "Topic 4: \nHealth, vulnerability, & adaptation",
+  `Topic 5` = "Topic 5: \nPolicy & activism",
+  `Topic 6` = "Topic 6: \nHuman rights & indigenous people"
+)
+
+# topic_labs <- paste0(names_list)
+names(topic_labs) <- paste(1:6)
+
+gamma_through_time <- ggplot() +
+  facet_wrap(~topic,
+             labeller = labeller(topic = topic_labs)) +
+  geom_col(data = abs_dfm_lda_max_gamma |> group_by(year, topic) |> slice(1), aes(x = year, y = n_prop), alpha = 0.2) +
+  geom_smooth(data = abs_dfm_lda_gamma_mean, aes(x = year, y = mean_gamma), se = FALSE) +
+  scale_x_date(limits = c(min(abs_dfm_lda_gamma$year), "2020-01-01")) +
+  labs(x = "Year", y = "Mean gamma | Proportion top topic") +
+  theme_minimal()
+
+gamma_through_time
+
+ggsave(
+  filename = "gamma_through_time.png",
+  plot = gamma_through_time,
+  device = "png",
+  path = "images/",
+  dpi = 300,
+  width = 200,
+  height = 110,
+  units = "mm"
+)
+
+# abs_dfm_lda_gamma_wide <- abs_dfm_lda_gamma |>
+#   pivot_wider(names_from = topic, values_from = gamma, names_prefix = "topic_") |> 
+#   add_count(year)
+
+# abs_dfm_lda_gamma_hist <- abs_dfm_lda_gamma |>
+#   add_count(year) |> 
+#   mutate(n = n/6,
+#          n_prop = n/sum(unique(n)))
+
+
+
+
+```
+
+<!-- ## phi ratio -->
+
+<!-- TWO TOPICS IN THIS CODE. TAKE CARE USING `abs_dfm_lda` WITH n TOPICS FROM ABOVE CODE. -->
+
+<!-- ```{r, PhiRatio, echo=FALSE, message=FALSE, eval=FALSE} -->
+<!-- phi_ratio <- tidy(abs_dfm_lda) |> -->
+<!--   mutate(topic = str_c("topic", topic)) |>  -->
+<!--   pivot_wider(names_from = topic, values_from = beta) |>  -->
+<!--   filter(topic1 > .001 | topic2 > .001) |> -->
+<!--   mutate(log_ratio = log2(topic2 / topic1)) -->
+
+<!-- phi_ratio |>  -->
+<!--   top_n(20, abs(log_ratio)) |>  -->
+<!--   ggplot(aes(y = fct_reorder(term, log_ratio), -->
+<!--              x = log_ratio)) +  -->
+<!--   geom_col() +  -->
+<!--   labs(y = "", -->
+<!--        x = "log ratio of phi between topic 2 and topic 1 (base 2)") -->
+<!-- ``` -->
+
+## Documents with highest Gamma per topic
+
+Selecting top 10 documents with the highest Gamma per topic. More than 
+
+
+```{r, Gamma, echo=FALSE, warning=FALSE, message=FALSE}
+# 6 TOPICS IN THIS CODE
+library(wordcloud)
+set.seed(1984)
+gamma_cluster <- tidy(abs_dfm_lda, matrix = "gamma")|> 
+  left_join(corpus_df_gamma, by = c("document" = "sequential_entry_number")) |>
+  group_by(topic)|>
+  arrange(desc(gamma))|> 
+  slice(1:10)
+
+# Plot not necessary
+# gamma_cluster |> 
+#   mutate(document = as.character(document))|> 
+#   reshape2::acast(document ~ topic, value.var = "gamma", fill = 0)|> 
+#   comparison.cloud(scale = c(2, 8))
+
+```
+
+### Top gamma per topic
+
+Table of the 10 articles per topic that scored the highest gamma.
+
+```{r, HighestGamma, echo=FALSE, warning=FALSE, message=FALSE}
+
+top_10_by_gamma <- gamma_cluster |> 
+  select(topic, gamma, entry_number) |> 
+  left_join(corpus_df, by = "entry_number") |> 
+  select(topic, gamma, dc_identifier, dc_title, prism_doi, subtype_description, entry_number)
+
+top_10_by_gamma
+
+```
+
+```{r, eval=FALSE, include=FALSE}
+write_delim(top_5_by_gamma, file = "images/gamma_table.csv", delim =",")
+```
+
+
+
+# Author collaboration netrowk
+
+
+```{r, AuthorCollaboration, echo=FALSE, message=FALSE}
+
+author_id_df_pair <- author_id_df |>
+  drop_na(authid) |>
+  pairwise_count(item = authid, feature = entry_number, sort = TRUE)
+
+tags <- author_id_df |> 
+  drop_na(authid) |> 
+  select(authid, authname, afid) |> 
+  group_by(authid) |>
+  slice(1) |>
+  ungroup()
+  
+author_network <- as_tbl_graph(author_id_df_pair) |>
+  activate(nodes) |> 
+  left_join(tags, by = c("name" = "authid"))
+
+author_network_plot <- author_network |>
+  slice(1:70) |> 
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_colour = n), end_cap = circle(0.05, "inches"), edge_width = 1) + 
+  geom_node_point(color = "grey50", size = 3) +
+  geom_node_text(aes(label = authname), repel = TRUE, check_overlap = T) +
+  # scale_edge_colour_viridis() +
+  theme_graph(base_family="sans") +
+  labs(edge_colour = "Count")
+
+author_network_plot
+
+ggsave(
+  filename = "author_network_plot.png",
+  plot = author_network_plot,
+  device = "png",
+  path = "images/",
+  dpi = 300,
+  width = 190,
+  height = 170,
+  units = "mm"
+)
+
+ggsave(
+  filename = "author_network_plot.pdf",
+  plot = author_network_plot,
+  device = "pdf",
+  path = "images/",
+  width = 190,
+  height = 170,
+  units = "mm"
+)
+
+```
+
+# Country/affiliation network
+
+
+```{r, AuthorAffiliation, echo=FALSE, message=FALSE}
+
+author_af_df_na <- as.data.frame(sapply(author_af_df, function(x) sum(is.na(x))))
+
+author_af_df_net <- author_af_df |> 
+  drop_na(afid, affiliation_country) |>
+  add_count(country_n = affiliation_country)
+
+# sapply(author_af_df_net, function(x) sum(is.na(x)))
+
+author_af_df_net_pair <- author_af_df_net |>
+  pairwise_count(item = affiliation_country, feature = entry_number, sort = TRUE)
+
+# tags_af <- author_af_df_net |> 
+#   select(afid, affiliation_country, affiliation_city, affilname) |> 
+#   distinct(afid, .keep_all = TRUE)
+
+author_af_network <- as_tbl_graph(author_af_df_net_pair) |>
+  activate(nodes)
+
+# left_join(author_af_network, tags_af, by = c("name" = "afid"))
+
+
+country_networkgraph <- author_af_network |>
+  slice(1:15) |>
+  # activate(edges) |> 
+  # filter(n > 20) |> 
+  ggraph(layout = "kk") +
+  geom_edge_link(aes(edge_colour = n), end_cap = circle(0.05, "inches"), edge_width = 1) + 
+  geom_node_point(color = "grey", size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  # scale_edge_colour_viridis() +
+  theme_graph(base_family="sans") +
+  labs(edge_colour = "n")
+
+country_networkgraph
+
+
+ggsave(
+  filename = "country_networkgraph.png",
+  plot = country_networkgraph,
+  device = "png",
+  path = "images/",
+  dpi = 300,
+  width = 190,
+  height = 170,
+  units = "mm"
+)
+```
+
+# Country mentions in abstract
+
+Most commonly mentioned countries in abstract. Some country names can be conflated with other words, e.g., Georgia the U.S. state or Georgia the country. However, conflating names is very unlikely to be an issue in this context.
+
+```{r, CountryMentions, echo=FALSE, results='hide', cache=TRUE, warning=FALSE}
+unique(tolower(countrycode::countryname_dict$country.name.en))
+unique(tolower(countrycode::countryname_dict$country.name.alt))
+countryname_dict |> filter(grepl('congo', tolower(country.name.en)))
+countryname_dict |> filter(grepl('congo', tolower(country.name.alt)))
+
+
+
+all_country <- countrycode::countryname_dict |> 
+                  filter(grepl('[A-Za-z]', country.name.alt)) |>
+                  pull(country.name.alt) |> 
+                  tolower()
+pattern <- str_c(all_country, collapse = '|')
+
+country_mentions <- corpus_df |>
+  select(entry_number, dc_description) |> 
+  mutate(country = str_extract_all(tolower(dc_description), pattern)) |>
+  select(-dc_description) |>
+  unnest(country, keep_empty = TRUE)
+
+cuontry_match <- countrycode::countryname_dict |> 
+  mutate(across(everything(), tolower))
+
+country_mentions_join <- country_mentions |> 
+  drop_na(country) |> 
+  left_join(cuontry_match, by = c("country" = "country.name.alt")) |> 
+  group_by(entry_number) |> 
+  dplyr::distinct(country.name.en) |> 
+  ungroup()
+
+country_mentions_join2 <- country_mentions_join |> 
+  count(country.name.en, sort = T) |>
+  mutate(country.name.en = stringr::str_to_title(country.name.en),
+         country.name.en = reorder(country.name.en, n)) |> 
+  slice(1:20)
+
+country_mentions_plot <- ggplot(country_mentions_join2, aes(n, country.name.en)) +
+  geom_col(fill = get_pal("Kotare")[1]) +
+  geom_text(aes(label = n), 
+    hjust = 1, nudge_x = -.6,
+    colour = "white", size = 4) +
+  labs(y = NULL, x = "Count") +
+  theme_minimal()
+
+country_mentions_plot
+
+ggsave(
+  filename = "country_mentions_plot.png",
+  plot = country_mentions_plot,
+  device = "png",
+  path = "images/",
+  dpi = 300,
+  width = 190,
+  height = 110,
+  units = "mm"
+)
+# country_mentions_join |> filter(grepl('island', country))
+# country_mentions_join |> filter(grepl('island', country.name.en))
+
+
+```
+
+
+
+# Acknowledgements
+
+The authors acknowledge the support from the Perry lab; André Bellvé, Jacqui Vanderhoorn, and especially George Perry and Finn Lee. 
+
+
+<!-- Deal with accents `mutate(authkeywords_mod = stri_trans_general(authkeywords_mod, "Latin-ASCII"))` -->
+
+<!-- Deals with HTML -->
+
+<!--     clean_html <- function(s) { -->
+<!--       ret_string <- s -->
+
+<!--       if (ret_string != "" & !is.na(ret_string)) {  -->
+<!--         ret_string <- rvest::html_text(rvest::read_html(charToRaw(s))) -->
+<!--       } -->
+<!--       return(ret_string) -->
+<!--     } -->
+
+<!-- Removes after copywrite symbol from abstracts -->
+
+<!--     strip_copyright <- function(string) -->
+<!--     { -->
+<!--       # ret_string <- string -->
+<!--       # if(!is.na(string) & str_detect(string, pattern = "©") == TRUE) { -->
+<!--       #   str.pos <- str_locate(string, "©")[1] # find symbol                                                                               -->
+<!--       #   ret_string <- (str_sub(string, 1, str.pos - 1)) # rm it and following text -->
+<!--       # } -->
+<!--       #  -->
+<!--       # return(ret_string) -->
+
+<!--       ret_string <- string -->
+<!--       if(!is.na(ret_string)) { -->
+<!--         while (str_detect(ret_string, "©") == TRUE) { -->
+<!--            ret_string <- str_extract(ret_string, "^.*(?=(©))") -->
+<!--         } -->
+<!--       }   -->
+<!--       return(ret_string) -->
+
+<!--     } -->
+
+<!-- Identifies which language abstract is -->
+
+<!--     strip_copyright <- function(string) -->
+<!--     { -->
+<!--       # ret_string <- string -->
+<!--       # if(!is.na(string) & str_detect(string, pattern = "©") == TRUE) { -->
+<!--       #   str.pos <- str_locate(string, "©")[1] # find symbol                                                                               -->
+<!--       #   ret_string <- (str_sub(string, 1, str.pos - 1)) # rm it and following text -->
+<!--       # } -->
+<!--       #  -->
+<!--       # return(ret_string) -->
+
+<!--       ret_string <- string -->
+<!--       if(!is.na(ret_string)) { -->
+<!--         while (str_detect(ret_string, "©") == TRUE) { -->
+<!--            ret_string <- str_extract(ret_string, "^.*(?=(©))") -->
+<!--         } -->
+<!--       }   -->
+<!--       return(ret_string) -->
+
+<!--     } -->
+
+
+<!-- # from George -->
+<!-- # Bit janky. And not sure I got all the accents but you can add to the list. -->
+
+<!--  replace_accents <- function(string) -->
+<!-- { -->
+<!--   unwanted_array = list('Š'='S', 'š'='s', 'Ž'='Z', 'ž'='z', 'À'='A', 'Á'='A', 'Â'='A', 'Ã'='A', 'Ä'='A', 'Å'='A', 'Æ'='A', 'Ç'='C', 'È'='E', 'É'='E', 'Ê'='E', 'Ë'='E', 'Ì'='I', 'Í'='I', 'Î'='I', 'Ï'='I', 'Ñ'='N', 'Ò'='O', 'Ó'='O', 'Ô'='O', 'Õ'='O', 'Ö'='O', 'Ø'='O', 'Ù'='U', 'Ú'='U', 'Û'='U', 'Ü'='U', 'Ý'='Y', 'Þ'='B', 'ß'='Ss', 'à'='a', 'á'='a', 'â'='a', 'ã'='a', 'ä'='a', 'å'='a', 'æ'='a', 'ā'='a', 'ç'='c', 'č'='c', 'è'='e', 'é'='e', 'ê'='e', 'ë'='e', 'ì'='i', 'í'='i', 'î'='i', 'ï'='i', 'ð'='o', 'ō'='o', 'ñ'='n', 'ò'='o', 'ó'='o', 'ô'='o', 'õ'='o', 'ö'='o', 'ø'='o', 'ù'='u', 'ú'='u', 'û'='u', 'ü'='u', 'ū'='u', 'ý'='y', 'ý'='y', 'þ'='b', 'ÿ'='y') -->
+
+<!--   repl_string <- chartr(old = paste(names(unwanted_array), collapse = ''), new = paste(unwanted_array, collapse = ''), string) -->
+
+<!--   return(repl_string) -->
+<!-- } -->
