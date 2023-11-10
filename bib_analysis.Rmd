@@ -10,7 +10,12 @@ params:
   date: Sys.Date()
 ---
 
-# Packages and libraries
+# Introduction
+
+This document is the output of a reproducible workflow for the bibliometric and topic analysis supporting the submitted publication. Included in the repository hosted on figshare is the source code and additional analyses  including figures not included in the main text.
+
+
+# Packages and libraries {.unlisted .unnumbered .hidden}
 
 ```{r, Packages, echo=FALSE, message=FALSE, results='hide', warning=FALSE}
 
@@ -71,7 +76,7 @@ facet_bar <- function(df, y, x, by, nrow = 2, ncol = 2, scales = "free", names_l
 
 ```
 
-```{r, seed, cache=TRUE}
+```{r, seed, cache=TRUE, echo=FALSE}
 
 set.seed(1984)
 
@@ -366,11 +371,10 @@ normalised_pubs <- ggplot(all_subject_fields_long, aes(x = year, y = count, colo
 normalised_pubs
 
 ggsave(
-  filename = "normalised_pubs.png",
+  filename = "normalised_pubs.svg",
   plot = normalised_pubs,
-  device = "png",
+  device = "svg",
   path = "images/",
-  dpi = 300,
   width = 190,
   height = 110,
   units = "mm"
@@ -440,11 +444,10 @@ productive_authors_plot <- ggplot(head(productive_authors_df, 15), aes(n, authna
 productive_authors_plot
 
 ggsave(
-  filename = "productive_authors_plot.png",
+  filename = "productive_authors_plot.svg",
   plot = productive_authors_plot,
-  device = "png",
+  device = "svg",
   path = "images/",
-  dpi = 300,
   width = 190,
   height = 110,
   units = "mm"
@@ -519,11 +522,10 @@ top_pub_plot <-  ggplot(title_df, aes(y = author_year, x = citedby_count)) +
 top_pub_plot
 
 ggsave(
-  filename = "top_pub_plot.png",
+  filename = "top_pub_plot.svg",
   plot = top_pub_plot,
-  device = "png",
+  device = "svg",
   path = "images/",
-  dpi = 300,
   width = 190,
   height = 110,
   units = "mm"
@@ -557,16 +559,15 @@ productive_countries_plot <- ggplot(head(prod_country_df, 20), aes(n, affiliatio
 
 productive_countries_plot
 
-# ggsave(
-#   filename = "productive_countries_plot.png",
-#   plot = productive_countries_plot,
-#   device = "png",
-#   path = "images/",
-#   dpi = 300,
-#   width = 190,
-#   height = 110,
-#   units = "mm"
-# )
+ggsave(
+  filename = "productive_countries_plot.svg",
+  plot = productive_countries_plot,
+  device = "svg",
+  path = "images/",
+  width = 190,
+  height = 110,
+  units = "mm"
+)
 
 ```
 ```{r, ProductiveCountriesTab, echo=FALSE, message=FALSE}
@@ -709,7 +710,7 @@ ggraph(bigram_graph2, layout = "fr") +
   geom_edge_link(aes(edge_colour = log(n)), arrow = arrow, end_cap = circle(0.05, "inches"), edge_width = 1) + 
   scale_size_continuous(range = c(3, 15)) +
   geom_node_text(aes(label = name), repel = TRUE) +
-  scale_edge_colour_continuous(breaks = log(c(100, 500, 3000)), labels =c(100, 500, 3000)) +
+  scale_edge_colour_gradient(breaks = log(c(100, 500, 3000)), labels =c(100, 500, 3000), low = "#325756",  high = "#F9E211") +
   theme_graph(base_family="sans") +
   labs(edge_colour = "Bigram \ncount", size = "word \ncount") +
   guides(size = guide_legend(reverse = TRUE))
@@ -969,13 +970,12 @@ six_topic_plot <- tidy(abs_dfm_lda) |>
 six_topic_plot
 
 ggsave(
-  filename = "six_topic_plot.png",
+  filename = "six_topic_plot.svg",
   plot = six_topic_plot,
-  device = "png",
+  device = "svg",
   path = "images/",
-  dpi = 300,
   width = 190,
-  height = 200,
+  height = 180,
   units = "mm"
 )
 
@@ -1184,13 +1184,12 @@ gamma_through_time <- ggplot() +
 gamma_through_time
 
 ggsave(
-  filename = "gamma_through_time.png",
+  filename = "gamma_through_time.svg",
   plot = gamma_through_time,
-  device = "png",
+  device = "svg",
   path = "images/",
-  dpi = 300,
   width = 200,
-  height = 110,
+  height = 120,
   units = "mm"
 )
 
@@ -1298,27 +1297,16 @@ author_network_plot <- author_network |>
   geom_edge_link(aes(edge_colour = n), end_cap = circle(0.05, "inches"), edge_width = 1) + 
   geom_node_point(color = "grey50", size = 3) +
   geom_node_text(aes(label = authname), repel = TRUE, check_overlap = T) +
-  # scale_edge_colour_viridis() +
+  scale_edge_colour_gradient(low = "#1F6683",  high = "#F9E211") +
   theme_graph(base_family="sans") +
   labs(edge_colour = "Count")
 
 author_network_plot
 
 ggsave(
-  filename = "author_network_plot.png",
+  filename = "author_network_plot.svg",
   plot = author_network_plot,
-  device = "png",
-  path = "images/",
-  dpi = 300,
-  width = 190,
-  height = 170,
-  units = "mm"
-)
-
-ggsave(
-  filename = "author_network_plot.pdf",
-  plot = author_network_plot,
-  device = "pdf",
+  device = "svg",
   path = "images/",
   width = 190,
   height = 170,
@@ -1361,19 +1349,18 @@ country_networkgraph <- author_af_network |>
   geom_edge_link(aes(edge_colour = n), end_cap = circle(0.05, "inches"), edge_width = 1) + 
   geom_node_point(color = "grey", size = 5) +
   geom_node_text(aes(label = name), repel = TRUE) +
-  # scale_edge_colour_viridis() +
+  scale_edge_colour_gradient(low = "#1F6683",  high = "#F9E211") +
   theme_graph(base_family="sans") +
-  labs(edge_colour = "n")
+  labs(edge_colour = "Count")
 
 country_networkgraph
 
 
 ggsave(
-  filename = "country_networkgraph.png",
+  filename = "country_networkgraph.svg",
   plot = country_networkgraph,
-  device = "png",
+  device = "svg",
   path = "images/",
-  dpi = 300,
   width = 190,
   height = 170,
   units = "mm"
@@ -1431,11 +1418,10 @@ country_mentions_plot <- ggplot(country_mentions_join2, aes(n, country.name.en))
 country_mentions_plot
 
 ggsave(
-  filename = "country_mentions_plot.png",
+  filename = "country_mentions_plot.svg",
   plot = country_mentions_plot,
-  device = "png",
+  device = "svg",
   path = "images/",
-  dpi = 300,
   width = 190,
   height = 110,
   units = "mm"
@@ -1452,73 +1438,3 @@ ggsave(
 
 The authors acknowledge the support from the Perry lab; André Bellvé, Jacqui Vanderhoorn, and especially George Perry and Finn Lee. 
 
-
-<!-- Deal with accents `mutate(authkeywords_mod = stri_trans_general(authkeywords_mod, "Latin-ASCII"))` -->
-
-<!-- Deals with HTML -->
-
-<!--     clean_html <- function(s) { -->
-<!--       ret_string <- s -->
-
-<!--       if (ret_string != "" & !is.na(ret_string)) {  -->
-<!--         ret_string <- rvest::html_text(rvest::read_html(charToRaw(s))) -->
-<!--       } -->
-<!--       return(ret_string) -->
-<!--     } -->
-
-<!-- Removes after copywrite symbol from abstracts -->
-
-<!--     strip_copyright <- function(string) -->
-<!--     { -->
-<!--       # ret_string <- string -->
-<!--       # if(!is.na(string) & str_detect(string, pattern = "©") == TRUE) { -->
-<!--       #   str.pos <- str_locate(string, "©")[1] # find symbol                                                                               -->
-<!--       #   ret_string <- (str_sub(string, 1, str.pos - 1)) # rm it and following text -->
-<!--       # } -->
-<!--       #  -->
-<!--       # return(ret_string) -->
-
-<!--       ret_string <- string -->
-<!--       if(!is.na(ret_string)) { -->
-<!--         while (str_detect(ret_string, "©") == TRUE) { -->
-<!--            ret_string <- str_extract(ret_string, "^.*(?=(©))") -->
-<!--         } -->
-<!--       }   -->
-<!--       return(ret_string) -->
-
-<!--     } -->
-
-<!-- Identifies which language abstract is -->
-
-<!--     strip_copyright <- function(string) -->
-<!--     { -->
-<!--       # ret_string <- string -->
-<!--       # if(!is.na(string) & str_detect(string, pattern = "©") == TRUE) { -->
-<!--       #   str.pos <- str_locate(string, "©")[1] # find symbol                                                                               -->
-<!--       #   ret_string <- (str_sub(string, 1, str.pos - 1)) # rm it and following text -->
-<!--       # } -->
-<!--       #  -->
-<!--       # return(ret_string) -->
-
-<!--       ret_string <- string -->
-<!--       if(!is.na(ret_string)) { -->
-<!--         while (str_detect(ret_string, "©") == TRUE) { -->
-<!--            ret_string <- str_extract(ret_string, "^.*(?=(©))") -->
-<!--         } -->
-<!--       }   -->
-<!--       return(ret_string) -->
-
-<!--     } -->
-
-
-<!-- # from George -->
-<!-- # Bit janky. And not sure I got all the accents but you can add to the list. -->
-
-<!--  replace_accents <- function(string) -->
-<!-- { -->
-<!--   unwanted_array = list('Š'='S', 'š'='s', 'Ž'='Z', 'ž'='z', 'À'='A', 'Á'='A', 'Â'='A', 'Ã'='A', 'Ä'='A', 'Å'='A', 'Æ'='A', 'Ç'='C', 'È'='E', 'É'='E', 'Ê'='E', 'Ë'='E', 'Ì'='I', 'Í'='I', 'Î'='I', 'Ï'='I', 'Ñ'='N', 'Ò'='O', 'Ó'='O', 'Ô'='O', 'Õ'='O', 'Ö'='O', 'Ø'='O', 'Ù'='U', 'Ú'='U', 'Û'='U', 'Ü'='U', 'Ý'='Y', 'Þ'='B', 'ß'='Ss', 'à'='a', 'á'='a', 'â'='a', 'ã'='a', 'ä'='a', 'å'='a', 'æ'='a', 'ā'='a', 'ç'='c', 'č'='c', 'è'='e', 'é'='e', 'ê'='e', 'ë'='e', 'ì'='i', 'í'='i', 'î'='i', 'ï'='i', 'ð'='o', 'ō'='o', 'ñ'='n', 'ò'='o', 'ó'='o', 'ô'='o', 'õ'='o', 'ö'='o', 'ø'='o', 'ù'='u', 'ú'='u', 'û'='u', 'ü'='u', 'ū'='u', 'ý'='y', 'ý'='y', 'þ'='b', 'ÿ'='y') -->
-
-<!--   repl_string <- chartr(old = paste(names(unwanted_array), collapse = ''), new = paste(unwanted_array, collapse = ''), string) -->
-
-<!--   return(repl_string) -->
-<!-- } -->
